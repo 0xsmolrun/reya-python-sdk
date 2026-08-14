@@ -126,7 +126,6 @@ execution:
 
   reconcile_interval_s: 20
   candle_poll_interval_s: 20
-  fill_timeout_s: 15
   min_seconds_between_entries: 30
 
   # Shutdown policy.

@@ -260,8 +260,6 @@ class ExecutionConfig:
     reconcile_interval_s: int = 20
     #: Seconds between candle polls. 15m candles need no faster cadence.
     candle_poll_interval_s: int = 20
-    #: Seconds to wait for an entry fill to appear before giving up on it.
-    fill_timeout_s: int = 15
     #: Cancel every resting order for traded symbols on shutdown.
     cancel_orders_on_shutdown: bool = True
     #: Also flatten open positions on shutdown (off by default: brackets remain).
