@@ -20,9 +20,8 @@ from pathlib import Path
 import yaml
 from dotenv import load_dotenv
 
-from sdk.reya_rest_api.config import MAINNET_CHAIN_ID, TradingConfig
-
 from bot.utils.numbers import to_decimal
+from sdk.reya_rest_api.config import MAINNET_CHAIN_ID, TradingConfig
 
 T = TypeVar("T")
 
@@ -83,7 +82,7 @@ def _build(cls: Type[T], mapping: Optional[Mapping[str, Any]]) -> T:
     if unknown:
         raise ConfigError(f"Unknown {cls.__name__} option(s): {', '.join(sorted(unknown))}")
     kwargs = {name: _coerce(data[name], known[name].type) for name in data}
-    return cls(**kwargs)  # type: ignore[call-arg]
+    return cls(**kwargs)
 
 
 @dataclass
@@ -390,7 +389,7 @@ class BotConfig:
                 return [_plain(v) for v in value]
             return value
 
-        data = _plain(dataclasses.asdict(self))
+        data: Dict[str, Any] = _plain(dataclasses.asdict(self))
         secrets = data.get("exchange", {})
         if secrets.get("private_key"):
             secrets["private_key"] = "***redacted***"

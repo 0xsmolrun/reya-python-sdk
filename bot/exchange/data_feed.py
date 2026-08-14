@@ -23,13 +23,12 @@ import time
 from dataclasses import dataclass, field
 from decimal import Decimal
 
+from bot.exchange.reya_client import MarketDataClient
+from bot.strategy.indicators import Candle
 from sdk.async_api.error_message_payload import ErrorMessagePayload
 from sdk.async_api.ping_message_payload import PingMessagePayload
 from sdk.reya_websocket import ReyaSocket
 from sdk.reya_websocket.config import WebSocketConfig
-
-from bot.exchange.reya_client import MarketDataClient
-from bot.strategy.indicators import Candle
 
 logger = logging.getLogger("bot.exchange.feed")
 
@@ -316,7 +315,9 @@ class MarketFeed:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._socket: Optional[ReyaSocket] = None
         self._supervisor: Optional[asyncio.Task] = None
-        self._running = False
+        #: Set by stop(); an Event rather than a bool so the supervisor can
+        #: re-check it after every await without the flag being stale.
+        self._stopped = asyncio.Event()
         self._dropped = 0
         self._on_reconnect: List[Callable[[], None]] = []
 
@@ -326,13 +327,13 @@ class MarketFeed:
     async def start(self) -> None:
         """Connect and start the supervisor task."""
         self._loop = asyncio.get_running_loop()
-        self._running = True
+        self._stopped.clear()
         self._open_socket()
         self._supervisor = asyncio.create_task(self._supervise(), name="market-feed-supervisor")
 
     async def stop(self) -> None:
         """Stop supervising and close the socket."""
-        self._running = False
+        self._stopped.set()
         if self._supervisor is not None:
             self._supervisor.cancel()
             try:
@@ -372,9 +373,17 @@ class MarketFeed:
 
     # ------------------------------------------------------------------
     # WebSocket thread callbacks
+    #
+    # websocket-client hands these the WebSocketApp itself (our ReyaSocket), but
+    # the SDK annotates the parameter as ``WebSocket``. The handlers therefore
+    # take ``Any`` and work from ``self._socket``, which is the same object.
     # ------------------------------------------------------------------
-    def _handle_open(self, socket: ReyaSocket) -> None:
+    def _handle_open(self, _connection: Any) -> None:
         """Subscribe to every channel the bot needs. Runs on the WS thread."""
+        socket = self._socket
+        if socket is None:
+            return
+
         for symbol in self.symbols:
             socket.prices.price(symbol).subscribe()
             socket.market.summary(symbol).subscribe()
@@ -389,14 +398,14 @@ class MarketFeed:
 
         self._post(lambda: self._mark_connected(len(socket.active_subscriptions)))
 
-    def _handle_message(self, socket: ReyaSocket, message: object) -> None:
+    def _handle_message(self, connection: Any, message: object) -> None:
         """Forward a typed payload to the event loop. Runs on the WS thread."""
         self.status.last_message_at = time.time()
 
         # Answer server pings inline; the round trip keeps the socket alive.
         if isinstance(message, PingMessagePayload):
             try:
-                socket.send('{"type": "pong"}')
+                connection.send('{"type": "pong"}')
             except Exception as exc:  # noqa: BLE001 - a dead socket is handled by the supervisor
                 logger.debug("Could not answer ping: %s", exc)
             return
@@ -407,12 +416,12 @@ class MarketFeed:
 
         self._post(lambda: self._enqueue(message))
 
-    def _handle_error(self, _socket: ReyaSocket, error: Exception) -> None:
+    def _handle_error(self, _connection: Any, error: Exception) -> None:
         """Record a socket error. Runs on the WS thread."""
         self.status.last_error = str(error)
         logger.warning("Market feed error: %s", error)
 
-    def _handle_close(self, _socket: ReyaSocket, status_code: int, reason: str) -> None:
+    def _handle_close(self, _connection: Any, status_code: int, reason: str) -> None:
         """Mark the feed as down. Runs on the WS thread."""
         logger.warning("Market feed closed (%s): %s", status_code, reason)
         self._post(self._mark_disconnected)
@@ -472,9 +481,9 @@ class MarketFeed:
     async def _supervise(self) -> None:
         """Rebuild the connection whenever it drops or goes quiet."""
         backoff = 1.0
-        while self._running:
+        while not self._stopped.is_set():
             await asyncio.sleep(1.0)
-            if not self._running:
+            if self._stopped.is_set():
                 break
 
             stale = self.status.silence_s > self.stale_timeout_s
@@ -485,7 +494,7 @@ class MarketFeed:
             reason = "silent" if stale else "disconnected"
             logger.warning("Market feed %s; reconnecting in %.0fs", reason, backoff)
             await asyncio.sleep(backoff)
-            if not self._running:
+            if self._stopped.is_set():
                 break
 
             self._close_socket()

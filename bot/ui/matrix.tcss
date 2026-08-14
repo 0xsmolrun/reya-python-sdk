@@ -1,0 +1,116 @@
+/* Matrix dashboard styling: pure black ground, phosphor green everything. */
+
+Screen {
+    background: #000000;
+    color: #00ff41;
+    layout: vertical;
+}
+
+#header {
+    height: 4;
+    background: #000000;
+    border-bottom: heavy #0b6623;
+    padding: 0 1;
+}
+
+#body {
+    height: 1fr;
+    background: #000000;
+}
+
+/* The rain columns frame the dashboard on both edges. */
+#rain-left, #rain-right {
+    width: 6;
+    height: 100%;
+    background: #000000;
+}
+
+#left {
+    width: 5fr;
+    height: 100%;
+}
+
+#centre {
+    width: 3fr;
+    height: 100%;
+}
+
+/* The right column carries the widest tables (positions, orders, history), so
+   it gets more room than the centre. */
+#right {
+    width: 3fr;
+    height: 100%;
+}
+
+#chart {
+    height: 3fr;
+}
+
+#gaps {
+    height: 1fr;
+    min-height: 8;
+}
+
+#depth {
+    height: 3fr;
+}
+
+#tape {
+    height: 2fr;
+}
+
+#positions {
+    height: auto;
+    min-height: 5;
+}
+
+#orders {
+    height: auto;
+    min-height: 5;
+}
+
+#history {
+    height: auto;
+    min-height: 6;
+}
+
+#metrics {
+    height: 9;
+}
+
+#logs {
+    height: 1fr;
+    min-height: 6;
+}
+
+#tabs {
+    height: 1;
+    padding: 0 1;
+    background: #000000;
+}
+
+/* Height 2, not 1: the heavy top border consumes a row of its own and would
+   otherwise clip the status line entirely. */
+#status {
+    height: 2;
+    padding: 0 1;
+    background: #000000;
+    border-top: heavy #0b6623;
+}
+
+#controls {
+    height: 1;
+    padding: 0 1;
+    background: #000000;
+}
+
+Static {
+    background: #000000;
+    color: #00ff41;
+}
+
+Toast {
+    background: #04220b;
+    color: #00ff41;
+    border: heavy #0b6623;
+}

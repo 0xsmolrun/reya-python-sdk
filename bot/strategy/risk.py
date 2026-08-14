@@ -86,15 +86,25 @@ class RiskState:
             return ZERO
         return (-self.daily_pnl / self.day_start_equity) * HUNDRED
 
+    def is_cooling_down(self, now: Optional[float] = None) -> bool:
+        """Whether the loss-streak cooldown is still running at ``now``."""
+        moment = now if now is not None else time.time()
+        return moment < self.cooldown_until
+
+    def cooldown_remaining(self, now: Optional[float] = None) -> int:
+        """Seconds left on the cooldown at ``now``, or 0."""
+        moment = now if now is not None else time.time()
+        return max(0, int(self.cooldown_until - moment))
+
     @property
     def in_cooldown(self) -> bool:
-        """Whether the loss-streak cooldown is still running."""
-        return time.time() < self.cooldown_until
+        """Whether the cooldown is running right now (wall clock, for the UI)."""
+        return self.is_cooling_down()
 
     @property
     def cooldown_remaining_s(self) -> int:
-        """Seconds left on the cooldown, or 0."""
-        return max(0, int(self.cooldown_until - time.time()))
+        """Seconds left on the cooldown right now (wall clock, for the UI)."""
+        return self.cooldown_remaining()
 
 
 class RiskManager:
@@ -211,8 +221,8 @@ class RiskManager:
 
         if self.state.halted:
             return f"halted: {self.state.halt_reason}"
-        if self.state.in_cooldown:
-            return f"cooldown ({self.state.cooldown_remaining_s}s left)"
+        if self.state.is_cooling_down(moment):
+            return f"cooldown ({self.state.cooldown_remaining(moment)}s left)"
         if symbol_has_position:
             return "already in position for this symbol"
         if open_positions >= self.config.max_open_positions:
@@ -307,9 +317,7 @@ class RiskManager:
 
         # The stop must be on the correct side of the entry, otherwise a rounding
         # edge case would invert the trade.
-        if (signal.side is SignalSide.LONG and stop >= entry) or (
-            signal.side is SignalSide.SHORT and stop <= entry
-        ):
+        if (signal.side is SignalSide.LONG and stop >= entry) or (signal.side is SignalSide.SHORT and stop <= entry):
             self.last_rejection = "stop on the wrong side of entry"
             return None
 
@@ -334,7 +342,7 @@ class RiskManager:
         if meta.max_leverage > 0:
             caps.append(sizing_equity * Decimal(meta.max_leverage) / entry)
         if caps:
-            raw_qty = min(raw_qty, min(caps))
+            raw_qty = min(raw_qty, *caps)
 
         qty = round_qty_down(raw_qty, meta.qty_step_size)
         if qty <= ZERO:

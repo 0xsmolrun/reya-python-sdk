@@ -256,9 +256,9 @@ def ma_bias(candles: Sequence[Candle], period: int = 50) -> Bias:
         return Bias.NEUTRAL
 
     price = closes[-1]
-    if price > current and current > prior:
+    if price > current > prior:
         return Bias.BULLISH
-    if price < current and current < prior:
+    if price < current < prior:
         return Bias.BEARISH
     return Bias.NEUTRAL
 
@@ -302,8 +302,8 @@ def swept_liquidity_below(candles: Sequence[Candle], index: int, lookback: int) 
     if start < 0 or index >= len(candles):
         return False
     prior_low = min(candle.low for candle in candles[start:index])
-    bar = candles[index]
-    return bar.low < prior_low <= bar.close
+    candle = candles[index]
+    return candle.low < prior_low <= candle.close
 
 
 def swept_liquidity_above(candles: Sequence[Candle], index: int, lookback: int) -> bool:
@@ -312,8 +312,8 @@ def swept_liquidity_above(candles: Sequence[Candle], index: int, lookback: int) 
     if start < 0 or index >= len(candles):
         return False
     prior_high = max(candle.high for candle in candles[start:index])
-    bar = candles[index]
-    return bar.high > prior_high >= bar.close
+    candle = candles[index]
+    return candle.high > prior_high >= candle.close
 
 
 __all__ = [

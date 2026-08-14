@@ -12,6 +12,7 @@ import os
 import time
 from collections import deque
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 # Matrix palette reused by both the console formatter and the TUI.
@@ -85,6 +86,10 @@ class RingBufferHandler(logging.Handler):
         """Monotonic counter so the UI can skip redraws when nothing changed."""
         return self._revision
 
+    def resize(self, capacity: int) -> None:
+        """Change how many records are retained, keeping the most recent ones."""
+        self._records = deque(self._records, maxlen=capacity)
+
     def tail(self, count: int) -> List[LogRecordView]:
         """Return the last ``count`` records, oldest first."""
         if count <= 0:
@@ -108,15 +113,10 @@ class MatrixConsoleFormatter(logging.Formatter):
         return f"{DIM}{clock}{RESET} {colour}{record.levelname[:4]:<4}{RESET} {DIM}{name:<18}{RESET} {colour}{message}{RESET}"
 
 
-_ring_buffer: Optional[RingBufferHandler] = None
-
-
+@lru_cache(maxsize=1)
 def get_ring_buffer() -> RingBufferHandler:
     """Return the process-wide ring buffer handler, creating it on first use."""
-    global _ring_buffer
-    if _ring_buffer is None:
-        _ring_buffer = RingBufferHandler()
-    return _ring_buffer
+    return RingBufferHandler()
 
 
 def setup_logging(
@@ -145,7 +145,7 @@ def setup_logging(
         root.removeHandler(handler)
 
     ring = get_ring_buffer()
-    ring._records = deque(ring._records, maxlen=capacity)
+    ring.resize(capacity)
     ring.setLevel(numeric_level)
     root.addHandler(ring)
 

@@ -91,8 +91,8 @@ def compute_stats(trades: Sequence[TradeRecord], starting_equity: Decimal = ZERO
     net_pnl = sum((trade.pnl for trade in trades), ZERO)
     total_fees = sum((trade.fees for trade in trades), ZERO)
 
-    profit_factor = Decimal("Infinity") if gross_loss == ZERO and gross_profit > ZERO else safe_div(
-        gross_profit, gross_loss
+    profit_factor = (
+        Decimal("Infinity") if gross_loss == ZERO and gross_profit > ZERO else safe_div(gross_profit, gross_loss)
     )
 
     # Drawdown from the cumulative PnL curve, measured against its running peak.

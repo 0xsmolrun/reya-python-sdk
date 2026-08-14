@@ -1,0 +1,171 @@
+# Reya 15m Fair Value Gap bot — strategy, risk and UI configuration.
+#
+# Secrets never live here. Credentials and endpoints come from the environment
+# (see .env.example), so this file is safe to commit and share.
+#
+# Every value below is the built-in default; delete anything you do not want to
+# override. Run `python -m bot.main --check` after editing to validate.
+
+# live | paper | backtest
+#   live      signs and sends real orders
+#   paper     simulates fills against live prices (safe default)
+#   backtest  replays historical candles and prints a report
+mode: paper
+
+# Markets to trade. The first is the dashboard's initial focus.
+# ETHRUSDPERP is the development default; BTCRUSDPERP is equally supported.
+symbols:
+  - ETHRUSDPERP
+  # - BTCRUSDPERP
+
+log_level: INFO
+log_file: logs/reya_fvg_bot.log
+
+# Start looking for entries immediately. When false the bot loads data and waits
+# for you to press `s` in the dashboard — recommended until you trust the setup.
+autostart: false
+
+
+# ---------------------------------------------------------------------------
+# Strategy: how a Fair Value Gap is found and qualified
+# ---------------------------------------------------------------------------
+strategy:
+  timeframe: 15m
+  # Candles loaded at startup. 500 bars is roughly five days of 15m data.
+  history_bars: 500
+
+  atr_period: 14
+
+  # A gap must be at least this many ATRs tall. Raise it to trade only violent
+  # imbalances; lower it to trade more setups of lower quality.
+  min_fvg_atr_mult: 0.25
+  # ...and at least this fraction of price (0.0005 = 5 basis points), which
+  # stops dust gaps qualifying when the tape goes quiet and ATR collapses.
+  min_fvg_price_pct: 0.0005
+
+  # Quality filters. Each one cuts the number of signals and (in principle)
+  # raises their hit rate. Start strict.
+  require_three_candle_run: true   # bars i-2, i-1, i all close in the direction
+  require_displacement: true       # the middle bar must have a large real body
+  displacement_atr_mult: 0.6
+  require_liquidity_sweep: false   # the move must first run a recent swing
+  sweep_lookback: 12
+
+  # Directional filter: none | ma | structure
+  #   ma         price on the right side of a rising/falling EMA
+  #   structure  higher highs and higher lows (or the inverse)
+  bias_mode: ma
+  bias_ma_period: 50
+  structure_lookback: 20
+
+  # Where inside the gap the entry limit sits.
+  #   0.0  far edge  — best price, often never reached
+  #   0.5  midpoint  — balanced (default)
+  #   1.0  near edge — fills most often, worst price
+  entry_zone_ratio: 0.5
+
+  # A gap stops being tradeable after this many bars...
+  max_fvg_age_bars: 60
+  # ...or once it is filled. `full` waits for price to trade clean through the
+  # far edge; `touch` invalidates it the first time price tags the zone.
+  mitigation_mode: full
+
+  max_tracked_fvgs: 40
+  # Skip a setup if price has already run past the far edge of the gap.
+  reject_if_beyond_far_edge: true
+
+
+# ---------------------------------------------------------------------------
+# Risk: sizing and the limits that stop the bot trading
+# ---------------------------------------------------------------------------
+risk:
+  # Percentage of account equity risked between entry and stop, per trade.
+  risk_per_trade_pct: 0.5
+  # Hard ceiling; the `]` key in the dashboard cannot exceed this.
+  max_risk_per_trade_pct: 2.0
+
+  # Stop sits this many ATRs beyond the far edge of the gap...
+  sl_atr_buffer_mult: 0.5
+  # ...and never closer to entry than this, so a razor-thin gap cannot produce
+  # an enormous position.
+  min_stop_atr_mult: 0.5
+
+  # Target: rr | opposing_fvg
+  #   rr            a fixed multiple of the stop distance
+  #   opposing_fvg  the nearest unfilled gap in the other direction, falling
+  #                 back to `rr` when that would pay less than min_risk_reward
+  tp_mode: rr
+  risk_reward: 2.0
+  min_risk_reward: 1.5
+
+  max_open_positions: 2
+  # Trading halts for the rest of the UTC day past this drawdown.
+  max_daily_loss_pct: 3.0
+  max_daily_trades: 10
+  # Losses in a row that trigger the cooldown, and how long it lasts.
+  consecutive_loss_limit: 3
+  cooldown_minutes: 120
+
+  # Exposure caps applied after risk sizing.
+  max_notional_pct: 300     # position notional as a percentage of equity
+  equity_cap: 0             # ignore equity above this when sizing (0 = off)
+
+
+# ---------------------------------------------------------------------------
+# Execution: how orders reach the exchange
+# ---------------------------------------------------------------------------
+execution:
+  # Entries are IOC limits priced through the book by this many basis points.
+  # This is what makes them marketable, and it doubles as a slippage cap.
+  entry_slippage_bps: 15
+  exit_slippage_bps: 30
+  entry_expiry_s: 10
+
+  # Place SL and TP immediately after the entry fills. Leave this on.
+  attach_brackets: true
+
+  reconcile_interval_s: 20
+  candle_poll_interval_s: 20
+  fill_timeout_s: 15
+  min_seconds_between_entries: 30
+
+  # Shutdown policy.
+  cancel_orders_on_shutdown: true
+  # Off by default: brackets survive a restart, so positions stay protected.
+  close_positions_on_shutdown: false
+
+  # Log orders instead of sending them, even in live mode.
+  dry_run: false
+
+
+# ---------------------------------------------------------------------------
+# Paper trading: fill simulation
+# ---------------------------------------------------------------------------
+paper:
+  starting_equity: 10000
+  fee_bps: 2
+  slippage_bps: 2
+
+
+# ---------------------------------------------------------------------------
+# Alerts (optional). Tokens come from the environment, never from this file.
+# ---------------------------------------------------------------------------
+notifier:
+  enabled: false
+  notify_entries: true
+  notify_exits: true
+  notify_errors: true
+  notify_halts: true
+
+
+# ---------------------------------------------------------------------------
+# Matrix terminal UI
+# ---------------------------------------------------------------------------
+ui:
+  refresh_ms: 400      # data panel repaint interval
+  rain_ms: 90          # digital rain frame interval
+  rain_enabled: true
+  rain_density: 0.6
+  log_lines: 200
+  depth_levels: 8
+  trade_rows: 12

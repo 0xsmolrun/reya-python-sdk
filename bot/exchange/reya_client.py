@@ -23,20 +23,6 @@ import logging
 import time
 from decimal import ROUND_DOWN, ROUND_UP, Decimal
 
-from sdk._version import SDK_VERSION
-from sdk.open_api.api.market_data_api import MarketDataApi
-from sdk.open_api.api.reference_data_api import ReferenceDataApi
-from sdk.open_api.api_client import ApiClient
-from sdk.open_api.configuration import Configuration
-from sdk.open_api.exceptions import ApiException
-from sdk.open_api.models.candle_history_data import CandleHistoryData
-from sdk.open_api.models.market_summary import MarketSummary
-from sdk.open_api.models.order_type import OrderType
-from sdk.open_api.models.price import Price
-from sdk.open_api.models.time_in_force import TimeInForce
-from sdk.reya_rest_api import ReyaTradingClient
-from sdk.reya_rest_api.models.orders import LimitOrderParameters, TriggerOrderParameters
-
 from bot.config import ExchangeConfig, ExecutionConfig
 from bot.exchange.base import (
     AccountSnapshot,
@@ -53,6 +39,19 @@ from bot.exchange.base import (
 from bot.strategy.fvg import SignalSide
 from bot.strategy.risk import TradePlan
 from bot.utils.numbers import ZERO, apply_bps, dec_to_str, round_price, to_decimal
+from sdk._version import SDK_VERSION
+from sdk.open_api.api.market_data_api import MarketDataApi
+from sdk.open_api.api.reference_data_api import ReferenceDataApi
+from sdk.open_api.api_client import ApiClient
+from sdk.open_api.configuration import Configuration
+from sdk.open_api.exceptions import ApiException
+from sdk.open_api.models.candle_history_data import CandleHistoryData
+from sdk.open_api.models.market_summary import MarketSummary
+from sdk.open_api.models.order_type import OrderType
+from sdk.open_api.models.price import Price
+from sdk.open_api.models.time_in_force import TimeInForce
+from sdk.reya_rest_api import ReyaTradingClient
+from sdk.reya_rest_api.models.orders import LimitOrderParameters, TriggerOrderParameters
 
 logger = logging.getLogger("bot.exchange.reya")
 

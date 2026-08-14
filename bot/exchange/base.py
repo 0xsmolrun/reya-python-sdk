@@ -293,7 +293,7 @@ def order_from_api(order: object) -> BrokerOrder:
         order_type=str(getattr(order_type, "value", order_type or "LIMIT")),
         trigger_price=to_decimal(trigger_raw) if trigger_raw is not None else None,
         status=str(getattr(status, "value", status or "OPEN")),
-        reduce_only=bool(getattr(order, "reduce_only", False) or False),
+        reduce_only=bool(getattr(order, "reduce_only", False)),
         created_at=int(getattr(order, "created_at", 0) or 0),
     )
 

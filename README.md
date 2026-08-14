@@ -300,6 +300,23 @@ python -m examples.basic_market_data
 python -m examples.trading.order_entry
 ```
 
+## Example Application: 15m Fair Value Gap Trading Bot
+
+The repository ships a complete, production-ready trading bot built on this SDK:
+a 15-minute Fair Value Gap (ICT/SMC) strategy for Reya perpetuals, with risk
+management, paper trading, a backtester and a Matrix-themed terminal dashboard.
+
+```bash
+poetry install --extras bot
+cp bot/.env.example .env
+python -m bot.main --check          # validate config and connectivity
+python -m bot.main --mode paper     # simulated fills against live prices
+```
+
+It needs no private key in `paper` or `backtest` mode. See
+[`bot/README.md`](bot/README.md) for the strategy explanation, configuration
+reference and risk warnings.
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.

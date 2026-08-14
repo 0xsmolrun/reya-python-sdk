@@ -24,24 +24,9 @@ import logging
 import time
 from decimal import Decimal
 
-from sdk.async_api.account_balance_update_payload import AccountBalanceUpdatePayload
-from sdk.async_api.market_depth_update_payload import MarketDepthUpdatePayload
-from sdk.async_api.market_perp_execution_update_payload import (
-    MarketPerpExecutionUpdatePayload,
-)
-from sdk.async_api.market_summary_update_payload import MarketSummaryUpdatePayload
-from sdk.async_api.order_change_update_payload import OrderChangeUpdatePayload
-from sdk.async_api.position_update_payload import PositionUpdatePayload
-from sdk.async_api.price_update_payload import PriceUpdatePayload
-from sdk.async_api.prices_update_payload import PricesUpdatePayload
-from sdk.async_api.wallet_perp_execution_update_payload import (
-    WalletPerpExecutionUpdatePayload,
-)
-
 from bot.config import BotConfig
 from bot.exchange.base import (
     Broker,
-    BrokerOrder,
     BrokerPosition,
     ExchangeError,
     Fill,
@@ -58,6 +43,19 @@ from bot.state import BotState, MarketTrade, OpenTrade, SymbolState, TradeRecord
 from bot.strategy.fvg import FVGStrategy, Signal, SignalSide
 from bot.strategy.risk import RiskManager, TradePlan
 from bot.utils.numbers import ZERO, optional_decimal, to_decimal
+from sdk.async_api.account_balance_update_payload import AccountBalanceUpdatePayload
+from sdk.async_api.market_depth_update_payload import MarketDepthUpdatePayload
+from sdk.async_api.market_perp_execution_update_payload import (
+    MarketPerpExecutionUpdatePayload,
+)
+from sdk.async_api.market_summary_update_payload import MarketSummaryUpdatePayload
+from sdk.async_api.order_change_update_payload import OrderChangeUpdatePayload
+from sdk.async_api.position_update_payload import PositionUpdatePayload
+from sdk.async_api.price_update_payload import PriceUpdatePayload
+from sdk.async_api.prices_update_payload import PricesUpdatePayload
+from sdk.async_api.wallet_perp_execution_update_payload import (
+    WalletPerpExecutionUpdatePayload,
+)
 
 logger = logging.getLogger("bot.engine")
 
@@ -232,7 +230,9 @@ class TradingEngine:
             try:
                 await coro_factory()
                 return
-            except asyncio.CancelledError:
+            # Cancellation is shutdown, not failure: it must reach the caller
+            # rather than be swallowed by the restart handler below.
+            except asyncio.CancelledError:  # pylint: disable=try-except-raise
                 raise
             except Exception as exc:  # noqa: BLE001 - restart rather than die
                 self.state.last_error = f"{name}: {exc}"
@@ -403,7 +403,7 @@ class TradingEngine:
         descending: bool,
     ) -> List[Tuple[Decimal, Decimal]]:
         """Apply incremental level updates; a zero quantity removes the level."""
-        merged = {price: qty for price, qty in existing}
+        merged = dict(existing)
         for price, qty in updates:
             if qty <= ZERO:
                 merged.pop(price, None)
@@ -769,9 +769,7 @@ class TradingEngine:
         if brackets.ok:
             if state.open_trade is not None:
                 state.open_trade.bracket_order_ids = [
-                    order_id
-                    for order_id in (brackets.stop.order_id, brackets.take_profit.order_id)
-                    if order_id
+                    order_id for order_id in (brackets.stop.order_id, brackets.take_profit.order_id) if order_id
                 ]
             return
 
