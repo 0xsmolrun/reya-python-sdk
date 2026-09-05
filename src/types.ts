@@ -21,7 +21,7 @@ export interface Trade {
   price: number
   timestamp: number
   pnl: number
-  status: 'FILLED' | 'PARTIAL' | 'REJECTED'
+  status: 'FILLED' | 'PARTIAL' | 'REJECTED' | 'PENDING'
 }
 
 export interface Agent {
@@ -43,6 +43,9 @@ export interface Agent {
   winRate: number
   strategy: string
   description: string
+  is_enabled: boolean
+  symbol: string
+  params: Record<string, unknown>
   initialized: boolean
 }
 
@@ -55,6 +58,45 @@ export interface BotState {
   cycleId: number
   connected: boolean
   lastUpdate: number
+}
+
+export interface BotConfig {
+  id: number
+  chain_id: number
+  account_id: number | null
+  wallet_address: string | null
+  api_url: string
+  ws_url: string
+  is_active: boolean
+}
+
+export interface WalletPosition {
+  symbol: string
+  notionalSize: number
+  side: string
+  entryPrice: number
+  unrealizedPnl: number
+  margin: number
+}
+
+export interface WalletBalance {
+  accountId: number
+  assetSymbol: string
+  balance: number
+}
+
+export interface LiveMarketData {
+  config: BotConfig
+  markets: Array<{ symbol: string; marketId: number; type: string }>
+  prices: Array<{ symbol: string; price: number; change24h: number }>
+  summary: Array<{ symbol: string; markPrice: number; indexPrice: number; fundingRate: number; volume24h: number }>
+  positions: WalletPosition[]
+  openOrders: unknown[]
+  balances: WalletBalance[]
+  accounts: unknown[]
+  marketError?: string
+  priceError?: string
+  walletError?: string
 }
 
 export const AGENT_COLORS: Record<string, string> = {
@@ -79,7 +121,7 @@ export const AGENT_HOMES: Record<string, [number, number]> = {
   liquidator: [835, 468],
 }
 
-export const STRATEGIES: Record<string, { role: string; strategy: string; description: string }> = {
+export const STRATEGY_META: Record<string, { role: string; strategy: string; description: string }> = {
   arbitrage: {
     role: 'Cross-market arbitrageur',
     strategy: 'Arbitrage',

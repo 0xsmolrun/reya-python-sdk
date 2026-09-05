@@ -1,0 +1,8 @@
+[functions.reya-market]
+verify_jwt = false
+
+[functions.reya-trade]
+verify_jwt = false
+
+[functions.reya-engine]
+verify_jwt = false

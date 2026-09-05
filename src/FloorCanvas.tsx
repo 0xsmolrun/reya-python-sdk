@@ -173,7 +173,7 @@ function drawTrainingMonitor(ctx: CanvasRenderingContext2D, x: number, y: number
   ctx.clip()
 
   // Bar chart of agent PnL
-  const barW = (w - 30) / s.agents.length
+  const barW = s.agents.length > 0 ? (w - 30) / s.agents.length : 0
   for (let i = 0; i < s.agents.length; i++) {
     const a = s.agents[i]
     const barH = Math.min(h - 35, Math.abs(a.pnl) / 5)
