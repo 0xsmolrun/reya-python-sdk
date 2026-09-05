@@ -994,3 +994,114 @@ body::before {
   margin-right: auto;
   letter-spacing: 0.1em;
 }
+
+/* Agent balance cards */
+.agent-balances {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.agent-balance-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.agent-balance-card:hover {
+  border-color: var(--border-light);
+  background: var(--bg-hover);
+}
+
+.abc-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.abc-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.abc-name {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-dim);
+  letter-spacing: 0.05em;
+}
+
+.abc-balance {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-bright);
+  margin-bottom: 2px;
+}
+
+.abc-pnl {
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.abc-trades {
+  font-size: 9px;
+  color: var(--text-dim);
+}
+
+/* Paper account grid */
+.paper-section {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 12px;
+}
+
+.paper-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.paper-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.paper-label {
+  font-size: 9px;
+  color: var(--text-dim);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.paper-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-bright);
+}
+
+/* Position side */
+.pos-side {
+  font-weight: 700;
+  font-size: 11px;
+}
+
+@media (max-width: 1024px) {
+  .agent-balances {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .agent-balances {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

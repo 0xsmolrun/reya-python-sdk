@@ -8,12 +8,12 @@ export function TradeFeed({ trades }: TradeFeedProps) {
   return (
     <div className="trade-feed">
       <div className="feed-header">
-        <span className="feed-title">LIVE TRADE FEED</span>
+        <span className="feed-title">PAPER TRADE FEED</span>
         <span className="feed-count">{trades.length} events</span>
       </div>
       <div className="feed-body">
         {trades.length === 0 && (
-          <div className="feed-empty">Waiting for trade execution events...</div>
+          <div className="feed-empty">Waiting for paper trade execution events...</div>
         )}
         {trades.slice(0, 30).map((t) => (
           <div key={t.id} className="feed-row">
@@ -23,9 +23,11 @@ export function TradeFeed({ trades }: TradeFeedProps) {
             <span className="feed-qty">{t.qty}</span>
             <span className="feed-symbol">{t.symbol}</span>
             <span className="feed-price">@ ${t.price.toFixed(2)}</span>
-            <span className="feed-pnl" style={{ color: t.pnl >= 0 ? '#a6df55' : '#ff6557' }}>
-              {t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}
-            </span>
+            {t.pnl !== 0 && (
+              <span className="feed-pnl" style={{ color: t.pnl >= 0 ? '#a6df55' : '#ff6557' }}>
+                {t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}
+              </span>
+            )}
             <span className={`feed-status feed-status-${t.status.toLowerCase()}`}>{t.status}</span>
           </div>
         ))}

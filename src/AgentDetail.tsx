@@ -1,21 +1,13 @@
-import { useState } from 'react'
-import type { Agent, LiveMarketData } from './types'
+import type { Agent, LiveMarketData, PaperPosition } from './types'
 
 interface AgentDetailProps {
   agent: Agent | null
   onToggle?: (strategyId: string, enabled: boolean) => void
-  onTrade?: (params: { symbol: string; isBuy: boolean; limitPx: string; qty: string; orderType: string }) => Promise<unknown>
   liveData?: LiveMarketData | null
+  paperPositions?: PaperPosition[]
 }
 
-export function AgentDetail({ agent, onToggle, onTrade, liveData }: AgentDetailProps) {
-  const [showTradeForm, setShowTradeForm] = useState(false)
-  const [tradeSymbol, setTradeSymbol] = useState('ETHRUSDPERP')
-  const [tradeSide, setTradeSide] = useState(true)
-  const [tradePrice, setTradePrice] = useState('')
-  const [tradeQty, setTradeQty] = useState('0.1')
-  const [tradeResult, setTradeResult] = useState<string | null>(null)
-
+export function AgentDetail({ agent, onToggle, liveData, paperPositions }: AgentDetailProps) {
   if (!agent) {
     return (
       <div className="detail-panel">
@@ -37,23 +29,9 @@ export function AgentDetail({ agent, onToggle, onTrade, liveData }: AgentDetailP
     ERROR: '#ff6557',
   }
 
-  const handleTrade = async () => {
-    if (!onTrade) return
-    setTradeResult('Submitting...')
-    const result = await onTrade({
-      symbol: tradeSymbol,
-      isBuy: tradeSide,
-      limitPx: tradePrice,
-      qty: tradeQty,
-      orderType: 'LIMIT_IOC',
-    })
-    setTradeResult(result && (result as Record<string, unknown>).success ? 'Order submitted' : 'Order failed')
-    setTimeout(() => setTradeResult(null), 3000)
-    setShowTradeForm(false)
-  }
-
-  // Find live position for this strategy's symbol
-  const livePosition = liveData?.positions?.find((p) => p.symbol === agent.symbol)
+  const totalValue = agent.paperBalance + agent.unrealizedPnl
+  const pnlPct = ((totalValue - agent.startingBalance) / agent.startingBalance) * 100
+  const livePrice = liveData?.prices?.find((p) => p.symbol === agent.symbol)?.price
 
   return (
     <div className="detail-panel">
@@ -96,22 +74,61 @@ export function AgentDetail({ agent, onToggle, onTrade, liveData }: AgentDetailP
           <div className="detail-value">{agent.symbol}</div>
         </div>
         <div className="detail-cell">
-          <div className="detail-label">TRADES</div>
-          <div className="detail-value">{agent.tradesCount}</div>
+          <div className="detail-label">LIVE PRICE</div>
+          <div className="detail-value">{livePrice ? `$${livePrice.toFixed(2)}` : '—'}</div>
         </div>
       </div>
 
-      {livePosition && (
-        <div className="detail-section">
-          <div className="detail-label">LIVE POSITION</div>
-          <div className="detail-position">
-            <span>Size: {livePosition.notionalSize}</span>
-            <span>Side: {livePosition.side}</span>
-            <span>Entry: {livePosition.entryPrice}</span>
-            <span style={{ color: livePosition.unrealizedPnl >= 0 ? '#a6df55' : '#ff6557' }}>
-              uPnL: {livePosition.unrealizedPnl >= 0 ? '+' : ''}{livePosition.unrealizedPnl}
+      <div className="detail-section paper-section">
+        <div className="detail-label">PAPER ACCOUNT</div>
+        <div className="paper-grid">
+          <div className="paper-cell">
+            <span className="paper-label">EQUITY</span>
+            <span className="paper-value">${totalValue.toFixed(2)}</span>
+          </div>
+          <div className="paper-cell">
+            <span className="paper-label">CASH</span>
+            <span className="paper-value">${agent.paperBalance.toFixed(2)}</span>
+          </div>
+          <div className="paper-cell">
+            <span className="paper-label">REALIZED</span>
+            <span className="paper-value" style={{ color: agent.realizedPnl >= 0 ? '#a6df55' : '#ff6557' }}>
+              {agent.realizedPnl >= 0 ? '+' : ''}{agent.realizedPnl.toFixed(2)}
             </span>
           </div>
+          <div className="paper-cell">
+            <span className="paper-label">UNREALIZED</span>
+            <span className="paper-value" style={{ color: agent.unrealizedPnl >= 0 ? '#a6df55' : '#ff6557' }}>
+              {agent.unrealizedPnl >= 0 ? '+' : ''}{agent.unrealizedPnl.toFixed(2)}
+            </span>
+          </div>
+          <div className="paper-cell">
+            <span className="paper-label">TOTAL PNL</span>
+            <span className="paper-value" style={{ color: agent.pnl >= 0 ? '#a6df55' : '#ff6557' }}>
+              {agent.pnl >= 0 ? '+' : ''}{agent.pnl.toFixed(2)} ({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(1)}%)
+            </span>
+          </div>
+          <div className="paper-cell">
+            <span className="paper-label">WIN RATE</span>
+            <span className="paper-value">{agent.winRate.toFixed(0)}% ({agent.winningTrades}/{agent.tradesCount})</span>
+          </div>
+        </div>
+      </div>
+
+      {paperPositions && paperPositions.length > 0 && (
+        <div className="detail-section">
+          <div className="detail-label">OPEN PAPER POSITIONS</div>
+          {paperPositions.map((pos) => (
+            <div key={pos.id} className="detail-position">
+              <span className="pos-side" style={{ color: pos.side === 'LONG' ? '#a6df55' : '#ff6557' }}>
+                {pos.side}
+              </span>
+              <span>{pos.size} @ ${pos.entry_price.toFixed(2)}</span>
+              <span style={{ color: pos.unrealized_pnl >= 0 ? '#a6df55' : '#ff6557' }}>
+                uPnL: {pos.unrealized_pnl >= 0 ? '+' : ''}{pos.unrealized_pnl.toFixed(2)}
+              </span>
+            </div>
+          ))}
         </div>
       )}
 
@@ -128,54 +145,6 @@ export function AgentDetail({ agent, onToggle, onTrade, liveData }: AgentDetailP
           <span className="thought-bracket">]</span>
         </div>
       </div>
-
-      {onTrade && (
-        <div className="detail-section">
-          {showTradeForm ? (
-            <div className="trade-form">
-              <div className="trade-form-row">
-                <select className="trade-select" value={tradeSymbol} onChange={(e) => setTradeSymbol(e.target.value)}>
-                  <option value="ETHRUSDPERP">ETHRUSDPERP</option>
-                  <option value="BTCRUSDPERP">BTCRUSDPERP</option>
-                  <option value="ETHRUSD">ETHRUSD (spot)</option>
-                  <option value="BTCRUSD">BTCRUSD (spot)</option>
-                </select>
-                <button
-                  className={`trade-side-btn ${tradeSide ? 'buy' : 'sell'}`}
-                  onClick={() => setTradeSide(!tradeSide)}
-                >
-                  {tradeSide ? 'BUY' : 'SELL'}
-                </button>
-              </div>
-              <input
-                className="form-input"
-                type="text"
-                placeholder="Price"
-                value={tradePrice}
-                onChange={(e) => setTradePrice(e.target.value)}
-              />
-              <input
-                className="form-input"
-                type="text"
-                placeholder="Quantity"
-                value={tradeQty}
-                onChange={(e) => setTradeQty(e.target.value)}
-              />
-              <div className="trade-form-actions">
-                <button className="btn-secondary" onClick={() => setShowTradeForm(false)}>CANCEL</button>
-                <button className="btn-primary" onClick={handleTrade} disabled={!tradePrice || !tradeQty}>
-                  SUBMIT ORDER
-                </button>
-              </div>
-              {tradeResult && <div className="trade-result">{tradeResult}</div>}
-            </div>
-          ) : (
-            <button className="btn-secondary" onClick={() => setShowTradeForm(true)}>
-              MANUAL ORDER
-            </button>
-          )}
-        </div>
-      )}
     </div>
   )
 }

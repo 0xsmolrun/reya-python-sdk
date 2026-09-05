@@ -22,6 +22,8 @@ export interface Trade {
   timestamp: number
   pnl: number
   status: 'FILLED' | 'PARTIAL' | 'REJECTED' | 'PENDING'
+  action: string
+  reason: string
 }
 
 export interface Agent {
@@ -47,6 +49,11 @@ export interface Agent {
   symbol: string
   params: Record<string, unknown>
   initialized: boolean
+  paperBalance: number
+  startingBalance: number
+  realizedPnl: number
+  unrealizedPnl: number
+  winningTrades: number
 }
 
 export interface BotState {
@@ -68,6 +75,32 @@ export interface BotConfig {
   api_url: string
   ws_url: string
   is_active: boolean
+}
+
+export interface PaperAccount {
+  id: string
+  strategy_name: string
+  starting_balance: number
+  cash_balance: number
+  position_value: number
+  realized_pnl: number
+  unrealized_pnl: number
+  total_pnl: number
+  total_trades: number
+  winning_trades: number
+}
+
+export interface PaperPosition {
+  id: string
+  strategy_id: string
+  symbol: string
+  side: string
+  size: number
+  entry_price: number
+  current_price: number
+  unrealized_pnl: number
+  status: string
+  opened_at: number
 }
 
 export interface WalletPosition {
