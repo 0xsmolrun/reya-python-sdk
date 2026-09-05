@@ -9,18 +9,14 @@ const corsHeaders = {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
+const TRADING_SYMBOL = "ETHRUSDPERP";
+
 interface StrategyDecision {
   action: "BUY" | "SELL" | "HOLD" | "CLOSE";
   symbol: string;
   qty: number;
   reason: string;
   limitPx?: number;
-}
-
-interface PriceHistory {
-  symbol: string;
-  prices: number[];
-  timestamps: number[];
 }
 
 Deno.serve(async (req: Request) => {
@@ -39,38 +35,50 @@ Deno.serve(async (req: Request) => {
 
     const apiUrl = config?.api_url || "https://api.reya.xyz/v2";
 
-    // Fetch live market data
-    const [marketsRes, pricesRes, summaryRes] = await Promise.all([
+    // Fetch live market data (marketsSummary endpoint doesn't exist on this API)
+    const [marketsRes, pricesRes] = await Promise.all([
       fetch(`${apiUrl}/marketDefinitions`),
       fetch(`${apiUrl}/prices`),
-      fetch(`${apiUrl}/marketsSummary`),
     ]);
 
     const markets = marketsRes.ok ? await marketsRes.json() : [];
     const prices = pricesRes.ok ? await pricesRes.json() : [];
-    const summary = summaryRes.ok ? await summaryRes.json() : [];
 
-    // Fetch enabled strategies
-    const { data: strategies } = await supabase
-      .from("bot_strategies")
-      .select("*")
-      .eq("is_enabled", true);
+    // Get current ETHRUSDPERP price
+    // API returns oraclePrice/poolPrice as strings
+    const priceData = prices.find((p: { symbol: string }) => p.symbol === TRADING_SYMBOL) as
+      | { symbol: string; oraclePrice?: string; poolPrice?: string; price?: number }
+      | undefined;
+    const currentPrice = priceData
+      ? Number(priceData.oraclePrice || priceData.poolPrice || priceData.price || 0)
+      : 0;
 
-    if (!strategies || strategies.length === 0) {
+    if (!currentPrice) {
       return new Response(
-        JSON.stringify({ status: "no_strategies", message: "No enabled strategies" }),
+        JSON.stringify({ status: "no_price", message: "No live price for " + TRADING_SYMBOL }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
-    // Fetch paper accounts
-    const { data: accounts } = await supabase
+    // Fetch all strategies
+    const { data: strategies } = await supabase
+      .from("bot_strategies")
+      .select("*");
+
+    if (!strategies || strategies.length === 0) {
+      return new Response(
+        JSON.stringify({ status: "no_strategies", message: "No strategies found" }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    // Ensure all strategies have paper accounts
+    const { data: existingAccounts } = await supabase
       .from("paper_accounts")
       .select("*");
 
-    // Ensure all strategies have paper accounts
     for (const strat of strategies) {
-      if (!accounts?.find((a: { id: string }) => a.id === strat.id)) {
+      if (!existingAccounts?.find((a: { id: string }) => a.id === strat.id)) {
         await supabase.from("paper_accounts").insert({
           id: strat.id,
           strategy_name: strat.name,
@@ -80,184 +88,171 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Refetch accounts after potential inserts
-    const { data: allAccounts } = await supabase
+    // Refetch accounts
+    const { data: allAccountsRaw } = await supabase
       .from("paper_accounts")
       .select("*");
-    const accountMap = new Map<string, Record<string, unknown>>(
-      (allAccounts || []).map((a: Record<string, unknown>) => [a.id as string, a])
-    );
+    const accountMap = new Map<string, Record<string, unknown>>();
+    for (const a of (allAccountsRaw || [])) {
+      const row = a as Record<string, unknown>;
+      accountMap.set(row.id as string, {
+        ...row,
+        cash_balance: Number(row.cash_balance),
+        realized_pnl: Number(row.realized_pnl),
+        total_pnl: Number(row.total_pnl),
+        total_trades: Number(row.total_trades),
+        winning_trades: Number(row.winning_trades),
+        position_value: Number(row.position_value),
+        unrealized_pnl: Number(row.unrealized_pnl),
+      });
+    }
 
-    // Fetch open paper positions
-    const { data: openPositions } = await supabase
+    // Fetch open positions
+    const { data: openPositionsRaw } = await supabase
       .from("paper_positions")
       .select("*")
       .eq("status", "OPEN");
+    const openPositions = (openPositionsRaw || []).map((p: Record<string, unknown>) => ({
+      id: p.id as string,
+      strategy_id: p.strategy_id as string,
+      symbol: p.symbol as string,
+      side: p.side as string,
+      size: Number(p.size),
+      entry_price: Number(p.entry_price),
+      current_price: Number(p.current_price),
+      unrealized_pnl: Number(p.unrealized_pnl),
+    }));
 
-    // Fetch recent paper trades for price history
-    const { data: recentTrades } = await supabase
+    // Fetch recent trades for price history
+    const { data: recentTradesRaw } = await supabase
       .from("paper_trades")
       .select("*")
       .order("timestamp", { ascending: false })
-      .limit(200);
+      .limit(500);
 
-    // Build price history per symbol from trade prices + current prices
-    const priceHistories = new Map<string, PriceHistory>();
-    for (const trade of (recentTrades || [])) {
-      const t = trade as { symbol: string; price: number; timestamp: number };
-      let hist = priceHistories.get(t.symbol);
-      if (!hist) {
-        hist = { symbol: t.symbol, prices: [], timestamps: [] };
-        priceHistories.set(t.symbol, hist);
-      }
-      hist.prices.unshift(t.price);
-      hist.timestamps.unshift(t.timestamp);
-    }
+    const recentTrades = (recentTradesRaw || []).map((t: Record<string, unknown>) => ({
+      id: t.id as string,
+      strategy_id: t.strategy_id as string,
+      symbol: t.symbol as string,
+      side: t.side as string,
+      qty: Number(t.qty),
+      price: Number(t.price),
+      timestamp: Number(t.timestamp),
+      action: t.action as string,
+      pnl: Number(t.pnl),
+    }));
+
+    // Build price history from all trades + current price
+    const priceHistory: number[] = recentTrades
+      .filter((t) => t.symbol === TRADING_SYMBOL)
+      .map((t) => t.price)
+      .reverse();
+    priceHistory.push(currentPrice);
+
+    // Keep last 100 prices
+    const trimmedHistory = priceHistory.slice(-100);
 
     const results: Record<string, unknown> = {};
     const now = Date.now();
+    const enabledStrategies = strategies.filter((s: Record<string, unknown>) => s.is_enabled !== false);
 
-    for (const strategy of strategies) {
-      const symbol = strategy.symbol;
-      const params = strategy.params || {};
-      const account = accountMap.get(strategy.id);
+    for (const strategy of enabledStrategies) {
+      const strat = strategy as Record<string, unknown>;
+      const stratId = strat.id as string;
+      const stratName = strat.name as string;
+      const params = (strat.params as Record<string, unknown>) || {};
+      const account = accountMap.get(stratId);
 
-      const priceData = prices.find((p: { symbol: string }) => p.symbol === symbol);
-      const summaryData = summary.find((s: { symbol: string }) => s.symbol === symbol);
-      const currentPrice = priceData?.price || summaryData?.markPrice || 0;
-
-      if (!currentPrice) {
-        results[strategy.id] = { action: "HOLD", reason: "No price data" };
-        continue;
-      }
-
-      // Add current price to history
-      let hist = priceHistories.get(symbol);
-      if (!hist) {
-        hist = { symbol, prices: [], timestamps: [] };
-        priceHistories.set(symbol, hist);
-      }
-      hist.prices.push(currentPrice);
-      hist.timestamps.push(now);
-
-      const stratPositions = (openPositions || []).filter(
-        (p: { strategy_id: string }) => p.strategy_id === strategy.id
-      );
-      const stratTrades = (recentTrades || []).filter(
-        (t: { strategy_id: string }) => t.strategy_id === strategy.id
-      );
+      const stratPositions = openPositions.filter((p) => p.strategy_id === stratId);
+      const stratTrades = recentTrades.filter((t) => t.strategy_id === stratId);
 
       const decision = evaluateStrategy(
-        strategy.id,
-        symbol,
+        stratId,
+        TRADING_SYMBOL,
         currentPrice,
         params,
-        hist.prices,
-        stratTrades as Array<{ timestamp: number; price: number; side: string }>,
-        stratPositions as Array<{ id: string; side: string; size: number; entry_price: number }>,
-        Number(account?.cash_balance || 500),
+        trimmedHistory,
+        stratTrades,
+        stratPositions,
+        Number(account?.cash_balance ?? 500),
       );
 
-      results[strategy.id] = {
+      results[stratId] = {
         action: decision.action,
         symbol: decision.symbol,
         qty: decision.qty,
         reason: decision.reason,
         price: currentPrice,
-        balance: Number(account?.cash_balance || 500),
+        balance: Number(account?.cash_balance ?? 500),
       };
 
       // Execute paper trade
       if (decision.action !== "HOLD" && decision.qty > 0) {
         const fillPrice = decision.limitPx || currentPrice;
-        const tradeSide = decision.action === "BUY" ? "BUY" : "SELL";
-        const isClose = decision.action === "CLOSE";
-
         let realizedPnl = 0;
         let tradeAction = "OPEN";
+        let tradeSide: "BUY" | "SELL" = decision.action === "BUY" ? "BUY" : "SELL";
+        let didTrade = false;
 
-        if (isClose && stratPositions.length > 0) {
-          // Close all open positions for this strategy
+        // Step 1: Handle closing existing positions (CLOSE action or position flip)
+        if (decision.action === "CLOSE" && stratPositions.length > 0) {
           tradeAction = "CLOSE";
           for (const pos of stratPositions) {
-            const p = pos as { id: string; side: string; size: number; entry_price: number };
-            const closePrice = fillPrice;
-            if (p.side === "LONG") {
-              realizedPnl += (closePrice - p.entry_price) * p.size;
+            if (pos.side === "LONG") {
+              realizedPnl += (fillPrice - pos.entry_price) * pos.size;
             } else {
-              realizedPnl += (p.entry_price - closePrice) * p.size;
+              realizedPnl += (pos.entry_price - fillPrice) * pos.size;
+            }
+            // Credit: return original margin + PnL
+            const margin = pos.size * pos.entry_price;
+            const acc = accountMap.get(stratId);
+            if (acc) {
+              acc.cash_balance = Number(acc.cash_balance) + margin + realizedPnl;
             }
             await supabase.from("paper_positions").update({
               status: "CLOSED",
               closed_at: now,
               realized_pnl: realizedPnl,
-              current_price: closePrice,
-            }).eq("id", p.id);
+              current_price: fillPrice,
+            }).eq("id", pos.id);
           }
-        } else if (decision.action === "BUY" || decision.action === "SELL") {
-          // Check if we have an existing position to close/flip
-          const existingPos = stratPositions[0] as { id: string; side: string; size: number; entry_price: number } | undefined;
-          if (existingPos) {
-            const wantSide = decision.action === "BUY" ? "LONG" : "SHORT";
-            if (existingPos.side !== wantSide) {
-              // Close existing position first
-              tradeAction = "CLOSE";
-              if (existingPos.side === "LONG") {
-                realizedPnl += (fillPrice - existingPos.entry_price) * existingPos.size;
-              } else {
-                realizedPnl += (existingPos.entry_price - fillPrice) * existingPos.size;
-              }
-              await supabase.from("paper_positions").update({
-                status: "CLOSED",
-                closed_at: now,
-                realized_pnl: realizedPnl,
-                current_price: fillPrice,
-              }).eq("id", existingPos.id);
+          tradeSide = stratPositions[0].side === "LONG" ? "SELL" : "BUY";
+          didTrade = true;
+        } else if ((decision.action === "BUY" || decision.action === "SELL") && stratPositions.length > 0) {
+          const wantSide = decision.action === "BUY" ? "LONG" : "SHORT";
+          const existingPos = stratPositions[0];
 
-              // Then open new position
-              const cost = decision.qty * fillPrice;
-              const cashBal = Number(account?.cash_balance || 500);
-              if (cost <= cashBal) {
-                await supabase.from("paper_positions").insert({
-                  strategy_id: strategy.id,
-                  symbol,
-                  side: wantSide,
-                  size: decision.qty,
-                  entry_price: fillPrice,
-                  current_price: currentPrice,
-                  unrealized_pnl: 0,
-                  status: "OPEN",
-                  opened_at: now,
-                });
-                // Record the open trade too
-                await supabase.from("paper_trades").insert({
-                  strategy_id: strategy.id,
-                  strategy_name: strategy.name,
-                  symbol,
-                  side: tradeSide,
-                  qty: decision.qty,
-                  price: fillPrice,
-                  pnl: 0,
-                  status: "FILLED",
-                  action: "OPEN",
-                  reason: decision.reason,
-                  timestamp: now,
-                });
-              }
+          if (existingPos.side !== wantSide) {
+            // Close existing position first
+            tradeAction = "CLOSE";
+            if (existingPos.side === "LONG") {
+              realizedPnl += (fillPrice - existingPos.entry_price) * existingPos.size;
+              tradeSide = "SELL";
             } else {
-              // Add to existing position (skip for simplicity in paper mode)
-              results[strategy.id].action = "HOLD";
-              results[strategy.id].reason = `${strategy.id}: already in ${wantSide} position`;
+              realizedPnl += (existingPos.entry_price - fillPrice) * existingPos.size;
+              tradeSide = "BUY";
             }
-          } else {
-            // Open new position
+            const margin = existingPos.size * existingPos.entry_price;
+            const acc = accountMap.get(stratId);
+            if (acc) {
+              acc.cash_balance = Number(acc.cash_balance) + margin + realizedPnl;
+            }
+            await supabase.from("paper_positions").update({
+              status: "CLOSED",
+              closed_at: now,
+              realized_pnl: realizedPnl,
+              current_price: fillPrice,
+            }).eq("id", existingPos.id);
+            didTrade = true;
+
+            // Now open new position in opposite direction
             const cost = decision.qty * fillPrice;
-            const cashBal = Number(account?.cash_balance || 500);
+            const cashBal = Number(accountMap.get(stratId)?.cash_balance ?? 500);
             if (cost <= cashBal) {
               await supabase.from("paper_positions").insert({
-                strategy_id: strategy.id,
-                symbol,
-                side: decision.action === "BUY" ? "LONG" : "SHORT",
+                strategy_id: stratId,
+                symbol: TRADING_SYMBOL,
+                side: wantSide,
                 size: decision.qty,
                 entry_price: fillPrice,
                 current_price: currentPrice,
@@ -265,94 +260,129 @@ Deno.serve(async (req: Request) => {
                 status: "OPEN",
                 opened_at: now,
               });
-            } else {
-              results[strategy.id].action = "HOLD";
-              results[strategy.id].reason = "Insufficient paper balance";
+              // Debit cost
+              const acc2 = accountMap.get(stratId);
+              if (acc2) {
+                acc2.cash_balance = Number(acc2.cash_balance) - cost;
+              }
+              // Record open trade
+              await supabase.from("paper_trades").insert({
+                strategy_id: stratId,
+                strategy_name: stratName,
+                symbol: TRADING_SYMBOL,
+                side: decision.action === "BUY" ? "BUY" : "SELL",
+                qty: decision.qty,
+                price: fillPrice,
+                pnl: 0,
+                status: "FILLED",
+                action: "OPEN",
+                reason: decision.reason,
+                timestamp: now,
+              });
+              didTrade = true;
             }
+          } else {
+            // Already in same direction — skip
+            results[stratId] = { action: "HOLD", reason: `${stratId}: already ${wantSide}`, qty: 0, symbol: TRADING_SYMBOL };
+          }
+        } else if ((decision.action === "BUY" || decision.action === "SELL") && stratPositions.length === 0) {
+          // Open new position
+          const wantSide = decision.action === "BUY" ? "LONG" : "SHORT";
+          const cost = decision.qty * fillPrice;
+          const cashBal = Number(accountMap.get(stratId)?.cash_balance ?? 500);
+          if (cost <= cashBal) {
+            await supabase.from("paper_positions").insert({
+              strategy_id: stratId,
+              symbol: TRADING_SYMBOL,
+              side: wantSide,
+              size: decision.qty,
+              entry_price: fillPrice,
+              current_price: currentPrice,
+              unrealized_pnl: 0,
+              status: "OPEN",
+              opened_at: now,
+            });
+            // Debit cost
+            const acc = accountMap.get(stratId);
+            if (acc) {
+              acc.cash_balance = Number(acc.cash_balance) - cost;
+            }
+            didTrade = true;
+          } else {
+            results[stratId] = { action: "HOLD", reason: "Insufficient paper balance", qty: 0, symbol: TRADING_SYMBOL };
           }
         }
 
-        // Record the trade
-        await supabase.from("paper_trades").insert({
-          strategy_id: strategy.id,
-          strategy_name: strategy.name,
-          symbol,
-          side: tradeSide,
-          qty: decision.qty,
-          price: fillPrice,
-          pnl: realizedPnl,
-          status: "FILLED",
-          action: tradeAction,
-          reason: decision.reason,
-          timestamp: now,
-        });
+        // Record the trade (for CLOSE or OPEN)
+        if (didTrade && (tradeAction === "CLOSE" || tradeAction === "OPEN")) {
+          await supabase.from("paper_trades").insert({
+            strategy_id: stratId,
+            strategy_name: stratName,
+            symbol: TRADING_SYMBOL,
+            side: tradeSide,
+            qty: decision.qty,
+            price: fillPrice,
+            pnl: realizedPnl,
+            status: "FILLED",
+            action: tradeAction,
+            reason: decision.reason,
+            timestamp: now,
+          });
+        }
 
-        // Update paper account
-        const acc = accountMap.get(strategy.id);
-        if (acc) {
-          const oldCash = Number(acc.cash_balance);
-          const oldRealized = Number(acc.realized_pnl);
-          const oldTrades = Number(acc.total_trades);
-          const oldWins = Number(acc.winning_trades);
+        // Update paper account stats
+        if (didTrade) {
+          const acc = accountMap.get(stratId);
+          if (acc) {
+            const oldRealized = Number(acc.realized_pnl);
+            const oldTrades = Number(acc.total_trades);
+            const oldWins = Number(acc.winning_trades);
 
-          let newCash = oldCash;
-          if (tradeAction === "OPEN") {
-            newCash = oldCash - decision.qty * fillPrice;
-          } else if (tradeAction === "CLOSE") {
-            newCash = oldCash + realizedPnl + (stratPositions as Array<{ size: number; entry_price: number }>).reduce(
-              (sum, p) => sum + p.size * p.entry_price, 0
-            );
+            const newRealized = oldRealized + realizedPnl;
+            const newTrades = oldTrades + 1;
+            const newWins = oldWins + (realizedPnl > 0 ? 1 : 0);
+
+            await supabase.from("paper_accounts").update({
+              cash_balance: Number(acc.cash_balance),
+              realized_pnl: newRealized,
+              total_trades: newTrades,
+              winning_trades: newWins,
+              updated_at: new Date().toISOString(),
+            }).eq("id", stratId);
+
+            acc.realized_pnl = newRealized;
+            acc.total_trades = newTrades;
           }
-
-          const newRealized = oldRealized + realizedPnl;
-          const newTrades = oldTrades + 1;
-          const newWins = oldWins + (realizedPnl > 0 ? 1 : 0);
-
-          await supabase.from("paper_accounts").update({
-            cash_balance: newCash,
-            realized_pnl: newRealized,
-            total_trades: newTrades,
-            winning_trades: newWins,
-            updated_at: new Date().toISOString(),
-          }).eq("id", strategy.id);
-
-          accountMap.get(strategy.id)!.cash_balance = newCash;
-          accountMap.get(strategy.id)!.realized_pnl = newRealized;
-          accountMap.get(strategy.id)!.total_trades = newTrades;
         }
       }
 
       // Update unrealized PnL for open positions
-      const updatedPositions = (openPositions || []).filter(
-        (p: { strategy_id: string }) => p.strategy_id === strategy.id
-      );
       let totalUnrealized = 0;
       let totalPosValue = 0;
-      for (const pos of updatedPositions) {
-        const p = pos as { id: string; side: string; size: number; entry_price: number };
+      for (const pos of openPositions.filter((p) => p.strategy_id === stratId)) {
         let uPnl = 0;
-        if (p.side === "LONG") {
-          uPnl = (currentPrice - p.entry_price) * p.size;
+        if (pos.side === "LONG") {
+          uPnl = (currentPrice - pos.entry_price) * pos.size;
         } else {
-          uPnl = (p.entry_price - currentPrice) * p.size;
+          uPnl = (pos.entry_price - currentPrice) * pos.size;
         }
         totalUnrealized += uPnl;
-        totalPosValue += p.size * currentPrice;
+        totalPosValue += pos.size * currentPrice;
         await supabase.from("paper_positions").update({
           current_price: currentPrice,
           unrealized_pnl: uPnl,
-        }).eq("id", p.id);
+        }).eq("id", pos.id);
       }
 
-      // Update total PnL in account
-      const acc = accountMap.get(strategy.id);
+      // Update total PnL
+      const acc = accountMap.get(stratId);
       if (acc) {
         const totalPnl = Number(acc.realized_pnl) + totalUnrealized;
         await supabase.from("paper_accounts").update({
           unrealized_pnl: totalUnrealized,
           position_value: totalPosValue,
           total_pnl: totalPnl,
-        }).eq("id", strategy.id);
+        }).eq("id", stratId);
       }
     }
 
@@ -368,6 +398,8 @@ Deno.serve(async (req: Request) => {
       JSON.stringify({
         status: "ok",
         cycle: now,
+        symbol: TRADING_SYMBOL,
+        price: currentPrice,
         strategies: results,
         totalPnl: grandPnl,
         totalTrades: grandTrades,
@@ -390,40 +422,41 @@ function evaluateStrategy(
   currentPrice: number,
   params: Record<string, unknown>,
   priceHistory: number[],
-  recentTrades: Array<{ timestamp: number; price: number; side: string }>,
+  recentTrades: Array<{ timestamp: number; price: number; side: string; action: string }>,
   openPositions: Array<{ id: string; side: string; size: number; entry_price: number }>,
   cashBalance: number,
 ): StrategyDecision {
+  const hasOpen = openPositions.length > 0;
   const lastTrade = recentTrades[0];
   const timeSinceLastTrade = lastTrade ? Date.now() - lastTrade.timestamp : Infinity;
-  const minCooldownMs = 15000;
-  const hasOpen = openPositions.length > 0;
+
+  // Very short cooldown — just to prevent duplicate within same cycle
+  const minCooldownMs = 2000;
 
   switch (strategyId) {
     case "momentum": {
-      const emaFastPeriod = Number(params.ema_fast) || 10;
-      const emaSlowPeriod = Number(params.ema_slow) || 30;
-      const size = Number(params.size) || 0.1;
+      const emaFastPeriod = Math.min(Number(params.ema_fast) || 5, priceHistory.length);
+      const emaSlowPeriod = Math.min(Number(params.ema_slow) || 15, priceHistory.length);
+      const size = Number(params.size) || 0.2;
 
       if (timeSinceLastTrade < minCooldownMs) {
-        return { action: "HOLD", symbol, qty: 0, reason: "Cooldown active" };
+        return { action: "HOLD", symbol, qty: 0, reason: "Cooldown" };
       }
 
-      if (priceHistory.length < 5) {
-        // Seed initial position
-        if (!hasOpen && Math.random() < 0.4) {
-          const action = Math.random() > 0.5 ? "BUY" : "SELL";
-          return { action, symbol, qty: size, reason: "Momentum: initial position (building history)" };
+      if (priceHistory.length < 3) {
+        // Not enough data — take a small initial position to start trading
+        if (!hasOpen) {
+          return { action: "BUY", symbol, qty: size, reason: "Momentum: initial position (building history)" };
         }
-        return { action: "HOLD", symbol, qty: 0, reason: "Building price history" };
+        return { action: "HOLD", symbol, qty: 0, reason: "Building history" };
       }
 
-      const fastEma = calcEma(priceHistory.slice(-emaFastPeriod));
-      const slowEma = calcEma(priceHistory.slice(-emaSlowPeriod));
+      const fastEma = calcEma(priceHistory.slice(-Math.max(emaFastPeriod, 2)));
+      const slowEma = calcEma(priceHistory.slice(-Math.max(emaSlowPeriod, 3)));
 
+      // If we have a position, check for exit
       if (hasOpen) {
         const pos = openPositions[0];
-        // Exit on reversal
         if (pos.side === "LONG" && fastEma < slowEma) {
           return { action: "CLOSE", symbol, qty: pos.size, reason: `Momentum: exit LONG (fast ${fastEma.toFixed(2)} < slow ${slowEma.toFixed(2)})` };
         }
@@ -433,40 +466,44 @@ function evaluateStrategy(
         return { action: "HOLD", symbol, qty: 0, reason: `Momentum: holding ${pos.side} (fast ${fastEma.toFixed(2)}, slow ${slowEma.toFixed(2)})` };
       }
 
-      if (fastEma > slowEma * 1.0002) {
+      // No position — look for entry
+      if (fastEma > slowEma) {
         return { action: "BUY", symbol, qty: size, reason: `Momentum: fast EMA ${fastEma.toFixed(2)} > slow EMA ${slowEma.toFixed(2)}` };
       }
-      if (fastEma < slowEma * 0.9998) {
+      if (fastEma < slowEma) {
         return { action: "SELL", symbol, qty: size, reason: `Momentum: fast EMA ${fastEma.toFixed(2)} < slow EMA ${slowEma.toFixed(2)}` };
       }
 
-      return { action: "HOLD", symbol, qty: 0, reason: `Momentum: no crossover (fast ${fastEma.toFixed(2)}, slow ${slowEma.toFixed(2)})` };
+      return { action: "HOLD", symbol, qty: 0, reason: `Momentum: no signal` };
     }
 
     case "reversion": {
-      const rsiPeriod = Number(params.rsi_period) || 14;
-      const oversold = Number(params.oversold) || 30;
-      const overbought = Number(params.overbought) || 70;
-      const size = Number(params.size) || 0.1;
+      const rsiPeriod = Math.min(Number(params.rsi_period) || 7, priceHistory.length);
+      const oversold = Number(params.oversold) || 40;
+      const overbought = Number(params.overbought) || 60;
+      const size = Number(params.size) || 0.05;
 
       if (timeSinceLastTrade < minCooldownMs) {
-        return { action: "HOLD", symbol, qty: 0, reason: "Cooldown active" };
+        return { action: "HOLD", symbol, qty: 0, reason: "Cooldown" };
       }
 
-      if (priceHistory.length < 5) {
-        return { action: "HOLD", symbol, qty: 0, reason: "Building price history for RSI" };
+      if (priceHistory.length < 3) {
+        if (!hasOpen) {
+          return { action: "SELL", symbol, qty: size, reason: "Reversion: initial short (building history)" };
+        }
+        return { action: "HOLD", symbol, qty: 0, reason: "Building RSI history" };
       }
 
-      const rsi = calcRsi(priceHistory.slice(-rsiPeriod));
+      const rsi = calcRsi(priceHistory.slice(-Math.max(rsiPeriod, 2)));
 
       if (hasOpen) {
         const pos = openPositions[0];
-        // Exit when RSI returns to midrange
+        // Exit when RSI crosses midline
         if (pos.side === "LONG" && rsi > 50) {
-          return { action: "CLOSE", symbol, qty: pos.size, reason: `Reversion: exit LONG (RSI ${rsi.toFixed(1)} back to mid)` };
+          return { action: "CLOSE", symbol, qty: pos.size, reason: `Reversion: exit LONG (RSI ${rsi.toFixed(1)} > 50)` };
         }
         if (pos.side === "SHORT" && rsi < 50) {
-          return { action: "CLOSE", symbol, qty: pos.size, reason: `Reversion: exit SHORT (RSI ${rsi.toFixed(1)} back to mid)` };
+          return { action: "CLOSE", symbol, qty: pos.size, reason: `Reversion: exit SHORT (RSI ${rsi.toFixed(1)} < 50)` };
         }
         return { action: "HOLD", symbol, qty: 0, reason: `Reversion: holding ${pos.side} (RSI ${rsi.toFixed(1)})` };
       }
@@ -478,44 +515,106 @@ function evaluateStrategy(
         return { action: "SELL", symbol, qty: size, reason: `Reversion: RSI ${rsi.toFixed(1)} > overbought ${overbought}` };
       }
 
-      return { action: "HOLD", symbol, qty: 0, reason: `Reversion: RSI ${rsi.toFixed(1)} within range` };
+      return { action: "HOLD", symbol, qty: 0, reason: `Reversion: RSI ${rsi.toFixed(1)} neutral` };
     }
 
     case "maker": {
-      const spreadBps = Number(params.spread_bps) || 5;
+      const spreadBps = Number(params.spread_bps) || 3;
       const orderSize = Number(params.order_size) || 0.05;
 
-      if (timeSinceLastTrade < 5000) {
-        return { action: "HOLD", symbol, qty: 0, reason: "Maker: refresh too soon" };
+      if (timeSinceLastTrade < 1000) {
+        return { action: "HOLD", symbol, qty: 0, reason: "Maker: too soon" };
       }
 
-      // Maker alternates between bid and ask
+      // Maker: if has position, close it at opposite side; if no position, open at bid/ask
+      if (hasOpen) {
+        const pos = openPositions[0];
+        const halfSpread = currentPrice * (spreadBps / 10000);
+        // Close at favorable price
+        if (pos.side === "LONG") {
+          return { action: "SELL", symbol, qty: pos.size, reason: `Maker: closing LONG at ask ${(currentPrice + halfSpread).toFixed(2)}`, limitPx: currentPrice + halfSpread };
+        } else {
+          return { action: "BUY", symbol, qty: pos.size, reason: `Maker: closing SHORT at bid ${(currentPrice - halfSpread).toFixed(2)}`, limitPx: currentPrice - halfSpread };
+        }
+      }
+
+      // No position — post bid or ask
       const halfSpread = currentPrice * (spreadBps / 10000);
       if (Math.random() > 0.5) {
-        return { action: "BUY", symbol, qty: orderSize, reason: `Maker: posting bid at ${(currentPrice - halfSpread).toFixed(2)}`, limitPx: currentPrice - halfSpread };
+        return { action: "BUY", symbol, qty: orderSize, reason: `Maker: bid at ${(currentPrice - halfSpread).toFixed(2)}`, limitPx: currentPrice - halfSpread };
       } else {
-        return { action: "SELL", symbol, qty: orderSize, reason: `Maker: posting ask at ${(currentPrice + halfSpread).toFixed(2)}`, limitPx: currentPrice + halfSpread };
+        return { action: "SELL", symbol, qty: orderSize, reason: `Maker: ask at ${(currentPrice + halfSpread).toFixed(2)}`, limitPx: currentPrice + halfSpread };
       }
     }
 
     case "arbitrage": {
-      const threshold = Number(params.spread_threshold) || 0.003;
-      const maxSize = Number(params.max_size) || 0.2;
+      // In paper mode, simulate spread detection
+      const threshold = Number(params.spread_threshold) || 0.001;
+      const size = Number(params.max_size) || 0.3;
 
-      // In paper mode, just scan — would need spot+perp price comparison
-      return { action: "HOLD", symbol, qty: 0, reason: `Arbitrage: scanning for spread > ${(threshold * 100).toFixed(1)}%` };
+      // Use price history to detect volatility as a proxy for spread
+      if (priceHistory.length < 3) {
+        if (!hasOpen) {
+          return { action: "BUY", symbol, qty: size, reason: "Arbitrage: initial position" };
+        }
+        return { action: "HOLD", symbol, qty: 0, reason: "Arbitrage: building history" };
+      }
+
+      const recentChange = Math.abs(currentPrice - priceHistory[priceHistory.length - 2]) / currentPrice;
+      if (recentChange > threshold) {
+        // Price moved enough — take position in direction of move
+        const wentUp = currentPrice > priceHistory[priceHistory.length - 2];
+        if (hasOpen) {
+          const pos = openPositions[0];
+          // Close on any significant move
+          return { action: "CLOSE", symbol, qty: pos.size, reason: `Arbitrage: spread ${(recentChange * 100).toFixed(2)}% > threshold, closing ${pos.side}` };
+        }
+        return { action: wentUp ? "BUY" : "SELL", symbol, qty: size, reason: `Arbitrage: spread ${(recentChange * 100).toFixed(2)}% detected` };
+      }
+
+      return { action: "HOLD", symbol, qty: 0, reason: `Arbitrage: spread ${(recentChange * 100).toFixed(3)}% < threshold ${(threshold * 100).toFixed(1)}%` };
     }
 
     case "risk": {
-      // Risk manager closes positions if exposure too high
-      if (openPositions.length > 3) {
+      // Risk manager: takes positions when exposure is low, closes when high
+      if (openPositions.length > 2) {
         return { action: "CLOSE", symbol, qty: 0, reason: `Risk: reducing from ${openPositions.length} positions` };
       }
+
+      if (timeSinceLastTrade < 3000) {
+        return { action: "HOLD", symbol, qty: 0, reason: "Risk: cooldown" };
+      }
+
+      if (!hasOpen) {
+        // Take a small position to participate
+        const size = 0.05;
+        return { action: Math.random() > 0.5 ? "BUY" : "SELL", symbol, qty: size, reason: "Risk: opening hedge position" };
+      }
+
       return { action: "HOLD", symbol, qty: 0, reason: "Risk: exposure within limits" };
     }
 
     case "liquidator": {
-      return { action: "HOLD", symbol, qty: 0, reason: "Liquidator: scanning protocol for liquidatable positions" };
+      // Simulate liquidation scanning — trade on large price moves
+      if (priceHistory.length < 3) {
+        if (!hasOpen) {
+          return { action: "BUY", symbol, qty: 0.05, reason: "Liquidator: initial scan position" };
+        }
+        return { action: "HOLD", symbol, qty: 0, reason: "Liquidator: scanning" };
+      }
+
+      const recentChange = Math.abs(currentPrice - priceHistory[priceHistory.length - 2]) / currentPrice;
+      if (recentChange > 0.002 && !hasOpen) {
+        const wentUp = currentPrice > priceHistory[priceHistory.length - 2];
+        return { action: wentUp ? "BUY" : "SELL", symbol, qty: 0.05, reason: `Liquidator: large move ${(recentChange * 100).toFixed(2)}% detected` };
+      }
+
+      if (hasOpen && recentChange < 0.0005) {
+        const pos = openPositions[0];
+        return { action: "CLOSE", symbol, qty: pos.size, reason: "Liquidator: calmed down, closing scan position" };
+      }
+
+      return { action: "HOLD", symbol, qty: 0, reason: "Liquidator: scanning for liquidatable positions" };
     }
 
     default:

@@ -90,6 +90,7 @@ export interface PaperAccount {
   winning_trades: number
 }
 
+
 export interface PaperPosition {
   id: string
   strategy_id: string

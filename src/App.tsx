@@ -83,7 +83,19 @@ export function App() {
       supabase.from('paper_positions').select('*').eq('status', 'OPEN'),
     ])
 
-    const accounts = (accountsRes.data || []) as unknown as PaperAccount[]
+    const rawAccounts = (accountsRes.data || []) as unknown as Record<string, unknown>[]
+    const accounts: PaperAccount[] = rawAccounts.map((a) => ({
+      id: a.id as string,
+      strategy_name: a.strategy_name as string,
+      starting_balance: Number(a.starting_balance),
+      cash_balance: Number(a.cash_balance),
+      position_value: Number(a.position_value),
+      realized_pnl: Number(a.realized_pnl),
+      unrealized_pnl: Number(a.unrealized_pnl),
+      total_pnl: Number(a.total_pnl),
+      total_trades: Number(a.total_trades),
+      winning_trades: Number(a.winning_trades),
+    }))
     const trades: Trade[] = (tradesRes.data || []).map((t: Record<string, unknown>) => ({
       id: t.id as string,
       agentId: t.strategy_id as string,
@@ -98,7 +110,19 @@ export function App() {
       action: t.action as string,
       reason: t.reason as string,
     }))
-    const positions = (positionsRes.data || []) as unknown as PaperPosition[]
+    const rawPositions = (positionsRes.data || []) as unknown as Record<string, unknown>[]
+    const positions: PaperPosition[] = rawPositions.map((p) => ({
+      id: p.id as string,
+      strategy_id: p.strategy_id as string,
+      symbol: p.symbol as string,
+      side: p.side as string,
+      size: Number(p.size),
+      entry_price: Number(p.entry_price),
+      current_price: Number(p.current_price),
+      unrealized_pnl: Number(p.unrealized_pnl),
+      status: p.status as string,
+      opened_at: Number(p.opened_at),
+    }))
 
     setPaperPositions(positions)
     setState((prev) => {
@@ -133,7 +157,19 @@ export function App() {
           supabase.from('paper_accounts').select('*'),
         ])
 
-        const accounts = (accountsRes.data || []) as unknown as PaperAccount[]
+        const rawAccounts = (accountsRes.data || []) as unknown as Record<string, unknown>[]
+        const accounts: PaperAccount[] = rawAccounts.map((a) => ({
+          id: a.id as string,
+          strategy_name: a.strategy_name as string,
+          starting_balance: Number(a.starting_balance),
+          cash_balance: Number(a.cash_balance),
+          position_value: Number(a.position_value),
+          realized_pnl: Number(a.realized_pnl),
+          unrealized_pnl: Number(a.unrealized_pnl),
+          total_pnl: Number(a.total_pnl),
+          total_trades: Number(a.total_trades),
+          winning_trades: Number(a.winning_trades),
+        }))
         const agents = createAgentsFromDb(strategiesRes.data || [], accounts)
 
         setState((prev) => ({
@@ -215,7 +251,7 @@ export function App() {
     }
 
     runEngine()
-    const interval = setInterval(runEngine, 15000)
+    const interval = setInterval(runEngine, 3000)
     return () => clearInterval(interval)
   }, [autoRun, refreshPaperData])
 

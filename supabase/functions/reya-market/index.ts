@@ -50,7 +50,13 @@ Deno.serve(async (req: Request) => {
       try {
         const pricesRes = await fetch(`${apiUrl}/prices`);
         if (pricesRes.ok) {
-          result.prices = await pricesRes.json();
+          const rawPrices = await pricesRes.json();
+          // Normalize: API returns oraclePrice/poolPrice as strings
+          result.prices = (rawPrices as Array<Record<string, unknown>>).map((p) => ({
+            symbol: p.symbol,
+            price: Number(p.oraclePrice || p.poolPrice || 0),
+            change24h: 0,
+          }));
         } else {
           result.prices = [];
           result.priceError = `Prices returned ${pricesRes.status}`;
